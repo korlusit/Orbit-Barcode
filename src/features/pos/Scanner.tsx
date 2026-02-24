@@ -75,26 +75,32 @@ export const Scanner = ({ onScan, cameraId, className }: ScannerProps) => {
   //  NATIVE BARKOD OKUMA — OffscreenCanvas ile merkez kırpma
   // ========================
   const startNativeScanner = useCallback(async () => {
-    // --- Kamerayı aç (720p — barkod için ideal, hızlı işlenir) ---
-    const videoConstraints: MediaTrackConstraints & Record<string, unknown> = {
-      width: { min: 640, ideal: 1280, max: 1920 },
-      height: { min: 480, ideal: 720, max: 1080 },
-      focusMode: "continuous",
-      frameRate: { ideal: 30, max: 60 },
-    };
-
     const currentCameraId = cameraIdRef.current;
-    if (currentCameraId) {
-      videoConstraints.deviceId = { exact: currentCameraId };
-    } else {
-      videoConstraints.facingMode = "environment";
-    }
+    console.log("🎥 Scanner başlatılıyor — cameraId:", currentCameraId || "otomatik (environment)");
+
+    // deviceId belirtildiğinde diğer constraint'ler çakışabilir (bazı tarayıcılar deviceId'yi yok sayar)
+    // Bu yüzden: cameraId varsa SADECE deviceId kullan, yoksa facingMode + ekstra ayarlar
+    const videoConstraints: MediaTrackConstraints & Record<string, unknown> = currentCameraId
+      ? {
+          deviceId: { exact: currentCameraId },
+        }
+      : {
+          facingMode: "environment",
+          width: { min: 640, ideal: 1280, max: 1920 },
+          height: { min: 480, ideal: 720, max: 1080 },
+          focusMode: "continuous",
+          frameRate: { ideal: 30, max: 60 },
+        };
 
     const stream = await navigator.mediaDevices.getUserMedia({
       video: videoConstraints,
       audio: false,
     });
     streamRef.current = stream;
+
+    // Hangi kameranın açıldığını logla
+    const activeTrack = stream.getVideoTracks()[0];
+    console.log("✅ Açılan kamera:", activeTrack.label, "| ID:", activeTrack.getSettings().deviceId);
 
     // Torch (flaş) aç — karanlık ortamlarda barkod daha iyi okunur
     try {
@@ -176,36 +182,43 @@ export const Scanner = ({ onScan, cameraId, className }: ScannerProps) => {
       await html5ScannerRef.current.clear();
     }
 
+    const currentCameraId = cameraIdRef.current;
+    console.log("📦 Fallback Scanner başlatılıyor — cameraId:", currentCameraId || "otomatik (environment)");
+
     const html5QrCode = new Html5Qrcode("reader-fallback", {
       formatsToSupport: HTML5_FORMATS,
       verbose: false,
     });
     html5ScannerRef.current = html5QrCode;
 
-    const config = {
-      fps: 20, // Maksimum FPS
+    // deviceId kullanılıyorsa videoConstraints ekleme — çakışır!
+    const config: Record<string, unknown> = {
+      fps: 20,
       qrbox: (vw: number, vh: number) => ({
         width: Math.floor(vw * 0.85),
         height: Math.floor(vh * 0.6),
       }),
       disableFlip: true,
       experimentalFeatures: { useBarCodeDetectorIfSupported: true },
-      videoConstraints: {
-        focusMode: "continuous",
-        width: { min: 640, ideal: 1280, max: 1920 },
-        height: { min: 480, ideal: 720, max: 1080 },
-        frameRate: { ideal: 30, max: 60 },
-      } as MediaTrackConstraints & Record<string, unknown>,
     };
 
-    const currentCameraId = cameraIdRef.current;
+    if (!currentCameraId) {
+      config.videoConstraints = {
+        facingMode: "environment",
+        width: { min: 640, ideal: 1280, max: 1920 },
+        height: { min: 480, ideal: 720, max: 1080 },
+        focusMode: "continuous",
+        frameRate: { ideal: 30, max: 60 },
+      };
+    }
+
     const cameraConfig = currentCameraId
       ? { deviceId: { exact: currentCameraId } }
       : { facingMode: "environment" as const };
 
     await html5QrCode.start(
       cameraConfig,
-      config,
+      config as any,
       (decodedText) => emitScan(decodedText),
       () => {}
     );
